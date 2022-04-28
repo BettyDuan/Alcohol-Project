@@ -1,1 +1,150 @@
+###calculate a SNP freq from 929DGP VCF
+import subprocess as sp
+import sys
+pwd='/home/classes/myanglab/data/929_WGS/'
+pd='/home/classes/myanglab/Betty/'
+indv_region=[]
+indv_id=[]
+#region=sys.argv[1].split(',')
 
+
+r=['AFRICA','AMERICA','EUROPE','MIDDLE_EAST','EAST_ASIA','CENTRAL_SOUTH_ASIA','OCEANIA']
+region={i:{} for i in r}
+
+with open(pwd+'hgdp_wgs.20190516.metadata.txt','r') as fileind:
+    for line in fileind:
+        if line.startswith('sample') is False:
+            line=line.split()
+            pop=line[5]
+            indvid=line[0]
+            continent=line[8]
+            longitude,latitude=line[7],line[6]
+            indv_region.append(pop)
+            indv_id.append(indvid)
+            if pop!='population' and pop not in region[continent]:
+                region[continent][pop]=float(latitude)
+    indvdic=dict(zip(indv_id,indv_region))
+
+for reg in region:
+    region[reg]=[k for k, v in 
+         reversed(sorted(region[reg].items(), key=lambda item: item[1]))]
+   
+
+#print(region)
+
+with open(pd+'HGDP_indv.txt','r') as filevcf:
+    for line in filevcf:
+        if line.startswith('#CHROM'):
+            line=line.split()
+            dic1={i:indvdic[value] for i, value in enumerate(line) 
+                  if value in indvdic.keys()}
+            break
+
+
+filename='hgdp_wgs.20190516.statphase.autosomes.vcf.gz'
+#filename='hgdp_wgs.20190516.full.chr12.vcf.gz'
+#snpstart='4:100239319-100239320'#ADH1b*2
+
+#snpstart='chr4:99307860-99307861'#ADH1b*3
+snpstart='chr4:99318162-99318163'#ADH1b*2
+#snpstart='chr12:111803962-111803962'
+
+#snpstart='12:112241766-112241767'#ALDH2
+#snpstart='4:100268190-100268191'#ADH1C
+#snpstart='4:100260789-100260790'#rs698
+#snpstart='4:100260783-100260784'#rs35719513
+#snpstart='4:100263965-100263966' #rs1693482
+command='tabix %s %s' % (filename,snpstart)
+proc = sp.Popen(command.split(), cwd=pwd, stdout=sp.PIPE)
+proc_output = proc.communicate() 
+p=proc_output[0].split()
+snpline = [x.decode('utf-8') for x in p]
+ref=snpline[3]
+ALT=snpline[4]
+INFO=snpline[7]
+
+'''import subprocess as sp
+filename='ALL.chr12.phase3_shapeit2_mvncall_integrated_v5a.20130502.genotypes.vcf.gz'
+snpstart='12:112241766-112241767'
+command='tabix %s %s' % (filename,snpstart)
+proc = sp.Popen(command.split(), cwd='/home/classes/myanglab/data/1KG/', stdout=sp.PIPE)
+proc_output = proc.communicate() 
+p=proc_output[0].split()
+snpline = [x.decode('utf-8') for x in p]
+#print(snpline)
+snpline2=[]
+for i,value in enumerate(snpline):
+    if 'VT=SNP' in snpline[i]:
+        snpline2=snpline[i-7:]
+#print(snpline2)
+ref=snpline2[3]
+ALT=snpline2[4] '''  
+
+def ancestral(INFO,ref,ALT):
+    switcher={'AA_ensembl=A':'A','AA_ensembl=T':'T','AA_ensembl=C':'C',
+              'AA_ensembl=G':'G'}
+    for i,value in enumerate(switcher.keys()):
+        if value in INFO:
+            ancestral=switcher.get(value)
+            if ancestral==ref:
+                return ref  
+            elif ancestral==ALT:
+                return ALT 
+            else:
+                return False
+            break
+    else:
+        return False
+    
+if ancestral(INFO,ref,ALT)==ref:   
+    switcher={'1|1':2, '1|0':1, '0|1':1, '0|0':0}
+    #switcher={'1/1':2, '1/0':1, '0/1':1, '0/0':0}
+elif ancestral(INFO,ref,ALT)==ALT:
+    switcher={'1|1':0, '1|0':1, '0|1':1, '0|0':2}
+    #switcher={'1/1':0, '1/0':1, '0/1':1, '0/0':2}
+    ref,ALT=ALT,ref
+
+dic_count={reg:{r:{'count':0,'total':0} for r in 
+                region[reg]} for reg in region}
+dic_freq={reg:{r:{'ref':0,'ALT':0} for r in 
+                region[reg]} for reg in region}
+dic_tcount={reg:{'count':0,'total':0} for reg in region}
+dic_tfreq={reg:{'ref':0,'ALT':0} for reg in region}
+
+#switcher={'1|1':2, '1|0':1, '0|1':1, '0|0':0}
+#switcher={'1/1':2, '1/0':1, '0/1':1, '0/0':0}
+
+lis=[]
+try1=[]
+for i,value in enumerate(snpline):
+    if i >= 9:
+        for r in region:
+            if dic1[i] in region[r]:
+                number=value[:3]
+                try1.append(switcher.get(number,False))
+                dic_count[r][dic1[i]]['count']+=switcher.get(number,False)
+                dic_count[r][dic1[i]]['total']+=2
+                
+for reg in dic_count:
+    for r in dic_count[reg]:
+        dic_freq[reg][r]['ALT']=round(dic_count[reg][r]['count']*100/dic_count[reg][r]['total'],2)
+        dic_freq[reg][r]['ref']=round(100-dic_freq[reg][r]['ALT'],2)
+        dic_tcount[reg]['count']+=dic_count[reg][r]['count']
+        dic_tcount[reg]['total']+=dic_count[reg][r]['total']
+
+for reg in dic_tcount:
+    dic_tfreq[reg]['ALT']=round(dic_tcount[reg]['count']*100/dic_tcount[reg]['total'],2)
+    dic_tfreq[reg]['ref']=round(100-dic_tfreq[reg]['ALT'],2)
+    
+#print(dic_count)
+print(dic_freq)
+
+print('The reference allele is',ref)
+print('The alternative allele is',ALT)
+
+#print(snp)
+for reg in dic_freq:
+    print(reg,',',ref,',',ALT)
+    for r in dic_freq[reg]:
+        print(r,',',dic_freq[reg][r]['ref'],',',dic_freq[reg][r]['ALT'])
+    #print('total,',dic_tfreq[reg]['ref'],',',dic_tfreq[reg]['ALT'])
