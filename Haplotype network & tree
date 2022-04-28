@@ -1,1 +1,19 @@
+##haplotype networks
+haps <- ape::read.dna("All_haplotypes.fasta", format="fasta")
+allHaps <- haplotype(haps)
+ind.hap<-with(stack(setNames(attr(allHaps, "index"), rownames(allHaps))),
+              table(hap=ind, Group=rownames(haps)[values]))
+hapNet <- haploNet(allHaps, d = NULL, getProb = TRUE) 
+plot(hapNet, labels=FALSE, pie=ind.hap, show.mutation=0)
+
+
+
+##haplotype neighbor-joining tree
+haps <- ape::read.dna("Distinct_haplotypes.fasta", format="fasta")
+an<-as.alignment(haps)
+nm<-as.matrix(an)
+nbinmat<-as.matrix(labels(haps))
+dnbin<-dist.dna(haps, model = "K80")
+tree<-nj(dnbin)
+plot(tree, use.edge.length = FALSE, font = 1, cex = 0.3)
 
