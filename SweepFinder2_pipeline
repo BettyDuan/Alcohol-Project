@@ -1,0 +1,207 @@
+import subprocess as sp
+import gzip
+import matplotlib.pyplot as plt
+
+#Specify population information (one notebook window)
+r1=['GWD','MSL','YRI','ESN','LWK','ACB','ASW']
+r2=['MXL','PUR','CLM','PEL']
+r3=['CHB','JPT','CHS','CDX','KHV']
+r4=['GBR','FIN','CEU','TSI','IBS']
+r5=['PJL','GIH','BEB','ITU','STU'] 
+region={'Africa':r1,'America':r2,'East_asia':r3,'Europe':r4,'South_asia':r5}
+
+#Determine the area of interest
+chrom = '4'
+snpMain = 'rs1229984' #'rs2066702'
+snpMainPos = '100239319' #'100229017'
+snpRange = '100185918-100274744'
+#popList = r1+r2+r3+r4+r5 #specify based on my need
+popList = ['YRI']
+
+chrom = '2'
+snpRange = '136565622-136665622'
+popList = ['GBR']
+
+
+#Determine individual IDs, pops, and regions 
+class Individual(): #public class
+    
+    def __init__(self, ID, population):
+        self.ID = ID
+        self.population = population
+        self.region = self.updateRegion(self.population)
+        #self.position = position
+        
+    def updateRegion(self, pop): #find region from population
+        for reg in region:
+            if pop in region[reg]:
+                return reg
+        return None
+
+        
+dicIndividuals={} ##{5.1:Haplotype(id,pop),5.2:Haplotype(id,pop)} important!
+indvdic={}
+with open('/home/classes/myanglab/data/1KG/integrated_call_samples_v3.20130502.ALL.panel','r') as fileind:
+    for line in fileind:
+        if line.startswith('sample') is False:
+            line=line.split()
+            indvid=line[0]
+            pop=line[1]
+            indvdic[indvid]=pop
+
+with open('/home/classes/myanglab/Betty/1000Indiv.txt','r') as file:
+    line=file.readline().split()
+    for index,value in enumerate(line):
+        if index>=9:
+            p = indvdic[value]
+            if p in popList:
+                dicIndividuals[index]=Individual(value,p)
+                
+                
+
+#create freq files (one notebook window)
+class findSweep():
+    
+    def __init__(self, chrom, snpRange):
+        self.chrom = chrom
+        self.snpRange = snpRange
+        self.indvDic = dicIndividuals
+        self.popList = popList
+        self.snpList = {}
+        
+    def getLines(self):
+        fileName = 'ALL.chr' + self.chrom + '.phase3_shapeit2_mvncall_integrated_v5a.20130502.genotypes.vcf.gz'
+        command='tabix %s %s' % (fileName, self.chrom + ':' + self.snpRange)
+        proc = sp.Popen(command.split(), cwd='/home/classes/myanglab/data/1KG/', stdout=sp.PIPE)
+        proc_output = proc.communicate() 
+        p=proc_output[0].split()
+        snpLines = [x.decode('utf-8') for x in p]
+        return snpLines
+    
+    def ancestral(self,INFO,ref,ALT):
+        switcher={'AA=A|':'A','AA=T|':'T','AA=C|':'C',
+                  'AA=G|':'G','AA=.|':'.'}
+        if 'VT=SNP' in INFO and 'MULTI_ALLELIC' not in INFO:
+            for i,value in enumerate(switcher.keys()):
+                if value in INFO:
+                    ancestral=switcher.get(value)
+                    if ancestral==ref: 
+                        return 0
+                    elif ancestral==ALT:
+                        return 2
+                    elif ancestral=='.':
+                        return 1
+        return None
+    
+    def vcfLine(self,line):
+        count,total = 0,0
+        position,ref,alt,INFO=int(line[1]),line[3],line[4],line[7]
+        folded = self.ancestral(INFO,ref,alt)
+        if folded is not None:
+            if folded == 2:
+                switcher = {'1|1':0, '1|0':1, '0|1':1, '0|0':2}
+                folded = 0
+            else:
+                switcher={'1|1':2, '1|0':1, '0|1':1, '0|0':0}
+            for i,value in enumerate(line):
+                if i in self.indvDic:
+                    count += switcher.get(value)
+                    total += 2
+        if count != 0:
+            return position, count, total, folded
+        return None
+    
+    def calcLines(self):
+        snpLines = self.getLines()
+        while len(snpLines) != 0:
+            snpLine = snpLines[:2513]
+            results = self.vcfLine(snpLine)
+            if results is not None:
+                #self.snpList.append(results)
+                position, count, total, folded = results[0],results[1],results[2],results[3]
+                self.snpList[position] = (count, total, folded)
+            del(snpLines[:2513]) #remember to customize by vcf file
+        self.writeFreqGrid()
+            
+    def writeFreqGrid(self):
+        name = self.chrom + ':' + self.snpRange
+        for pop in self.popList:
+            print(pop)
+            fileFreq=open('/home/classes/myanglab/Betty/SweepFinder/'+pop+'/'+pop+name+'_allelefreq.txt','w')
+            fileGrid=open('/home/classes/myanglab/Betty/SweepFinder/'+pop+'/'+pop+name+'_grid.txt','w')
+            fileFreq.write('position\tx\tn\tfolded\n')
+            for position in self.snpList:
+                results = self.snpList[position]
+                count, total, folded = results[0],results[1],results[2]
+                lineFreq = str(position) + '\t' + str(count) + '\t' + str(total) + '\t' + str(folded) + '\n'
+                lineGrid = str(position) + '\n'
+                fileFreq.write(lineFreq)
+                fileGrid.write(lineGrid)
+        fileFreq.close()
+        fileGrid.close()
+                          
+    def combineFreq(self):
+        for pop in self.popList:
+            allFile = '/scratch/ngs/myanglab/prepfiles/1KG_DAF/ldprune_1240K/1KG_'+pop+'_chrALL_1240Kpruned.dat.gz'
+            fileCom=open('/home/classes/myanglab/Betty/SweepFinder/'+pop+'/'+pop+'_combinefreq.txt','w')
+            fileCom.write('position\tx\tn\tfolded\n')
+            fileread=gzip.open(allFile,'rb') 
+            for line in fileread:
+                line=line.decode().strip()
+                if line.startswith('Chrom') is False:
+                    line=line.split()
+                    position, x_count, n_count=line[1],line[2],line[3]
+                    polarize='0'
+                    if x_count!='0':
+                        writeline=position+'\t'+x_count+'\t'+n_count+'\t'+polarize+'\n'
+                        fileCom.write(writeline)
+            fileread.close()
+            fileCom.close()
+            command='SweepFinder2 -f %s %s' % (pop+'_combinefreq.txt', pop+'_specfile.txt')
+            sp.Popen(command.split(), cwd='/home/classes/myanglab/Betty/SweepFinder/'+pop+'/', stdout=sp.PIPE)
+      
+findSweep = findSweepFiles(chrom, snpRange)
+findSweep.calcLines()
+findSweep.combineFreq()      
+      
+
+#run the software to generate sweep results (one notebook window)
+class runSweepFinder2():
+    def __init__(self, chrom, snpRange):
+        self.popList = popList
+        self.chrom = chrom
+        self.snpRange = snpRange
+        self.pwd = '/home/classes/myanglab/Betty/SweepFinder/'
+    
+    def luCommand(self): #without recombination file
+        #./SweepFinder2 –lu GridFile FreqFile SpectFile OutFile YRI4:100185918-100274744_allelefreq.txt
+        for pop in self.popList:
+            GridFile = pop + self.chrom + ':' + self.snpRange + '_grid.txt'
+            FreqFile = pop + self.chrom + ':' + self.snpRange + '_allelefreq.txt'
+            SpectFile = pop+'_specfile.txt'
+            OutFile = pop + self.chrom + ':' + self.snpRange + '_lu_output2.txt'
+            command='SweepFinder2 -lu %s %s %s %s' % (GridFile,FreqFile,SpectFile,OutFile )
+            sp.Popen(command.split(), cwd='/home/classes/myanglab/Betty/SweepFinder/'+pop+'/', stdout=sp.PIPE)
+            
+    def analysis(self, start, stop):
+        for pop in self.popList:
+            resultFile = open(self.pwd + pop + '/'+ pop + self.chrom + ':' + self.snpRange + '_lu_output2.txt','r')
+            x_values,y_values=[],[]
+            for line in resultFile:
+                if line.startswith('location') is False:
+                    line=line.split()
+                    position,CLR,alpha=float(line[0]),float(line[1]),float(line[2])
+                    x_values.append(position)
+                    y_values.append(CLR)
+        plt.figure(figsize=(10,7))
+        plt.plot(x_values, y_values, 'bo')
+        plt.xlim([start,stop])
+        plt.xlabel('basepair')
+        plt.ylabel('CLM')
+        plt.title('Sweepfinder2 '+pop + ' ' + self.chrom + ':' + self.snpRange)
+        plt.show()
+           
+
+runSweep = runSweepFinder2(chrom, snpRange)
+#runSweep.luCommand()
+runSweep.analysis(136597196,136634047)                          
